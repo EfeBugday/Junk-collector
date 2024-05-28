@@ -1,0 +1,150 @@
+import pygame
+import random
+import numpy as np
+
+# Initialize Pygame
+pygame.init()
+
+# Define constants
+GRID_SIZE = 20
+CELL_SIZE = 50
+WINDOW_SIZE = GRID_SIZE * CELL_SIZE
+QUOTA = 500
+INITIAL_QUOTA = 0
+AGENT_START_POS = (0, 0)
+FPS = 30  # Initial FPS
+
+# Define item types and their properties
+ITEMS = {
+    'C': {'name': 'Can', 'value': 5, 'count': int(0.05 * GRID_SIZE * GRID_SIZE)},
+    'W': {'name': 'Wooden Crate', 'value': 10, 'count': int(0.02 * GRID_SIZE * GRID_SIZE)},
+    'P': {'name': 'Golden Pendant', 'value': 100, 'count': int(0.005 * GRID_SIZE * GRID_SIZE)}
+}
+
+# Load images
+IMAGES = {
+    'C': pygame.image.load('can.png'),
+    'W': pygame.image.load('wooden_crate.png'),
+    'P': pygame.image.load('golden_pendant.png')
+}
+AGENT_IMAGE = pygame.image.load('agent.png')
+
+# Resize images to fit in the grid cells
+for key in IMAGES:
+    IMAGES[key] = pygame.transform.scale(IMAGES[key], (CELL_SIZE, CELL_SIZE))
+AGENT_IMAGE = pygame.transform.scale(AGENT_IMAGE, (CELL_SIZE, CELL_SIZE))
+
+# Colors
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+GREEN = (0, 255, 0)
+
+# Initialize the screen
+screen = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE))
+pygame.display.set_caption('Item Collection Game')
+
+# Create the grid
+grid = [['' for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+
+# Scatter items randomly on the grid
+def scatter_items():
+    for item_type, properties in ITEMS.items():
+        count = properties['count']
+        while count > 0:
+            x, y = random.randint(0, GRID_SIZE - 1), random.randint(0, GRID_SIZE - 1)
+            if grid[x][y] == '':
+                grid[x][y] = item_type
+                count -= 1
+
+# Draw the grid and items
+def draw_grid():
+    for x in range(GRID_SIZE):
+        for y in range(GRID_SIZE):
+            rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+            pygame.draw.rect(screen, WHITE, rect)
+            pygame.draw.rect(screen, BLACK, rect, 1)
+            if grid[x][y]:
+                screen.blit(IMAGES[grid[x][y]], rect.topleft)
+
+# Q-learning parameters
+ACTIONS = [(0, -1), (1, 0), (0, 1), (-1, 0)]  # Left, Down, Right, Up
+LEARNING_RATE = 0.1
+DISCOUNT_FACTOR = 0.9
+EPSILON = 0.1
+
+# Initialize Q-table
+q_table = np.zeros((GRID_SIZE, GRID_SIZE, len(ACTIONS)))
+
+# Get next action based on epsilon-greedy policy
+def get_next_action(state):
+    if random.uniform(0, 1) < EPSILON:
+        return random.choice(range(len(ACTIONS)))
+    else:
+        return np.argmax(q_table[state[0], state[1]])
+
+# Update Q-table
+def update_q_table(state, action, reward, next_state):
+    best_next_action = np.argmax(q_table[next_state[0], next_state[1]])
+    q_table[state[0], state[1], action] = q_table[state[0], state[1], action] + \
+        LEARNING_RATE * (reward + DISCOUNT_FACTOR * q_table[next_state[0], next_state[1], best_next_action] - q_table[state[0], state[1], action])
+
+# Main game loop
+def main():
+    scatter_items()
+    agent_pos = list(AGENT_START_POS)
+    current_quota = INITIAL_QUOTA
+    running = True
+    clock = pygame.time.Clock()
+
+    global FPS
+
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_UP:
+                    FPS += 10
+                elif event.key == pygame.K_DOWN:
+                    FPS = max(10, FPS - 10)  # Ensure FPS doesn't go below 10
+
+        current_state = tuple(agent_pos)
+        action_index = get_next_action(current_state)
+        action = ACTIONS[action_index]
+
+        # Calculate new position
+        new_pos = [agent_pos[0] + action[0], agent_pos[1] + action[1]]
+
+        # Ensure the agent stays within the grid
+        if 0 <= new_pos[0] < GRID_SIZE and 0 <= new_pos[1] < GRID_SIZE:
+            reward = 0
+            if grid[new_pos[0]][new_pos[1]]:
+                item = grid[new_pos[0]][new_pos[1]]
+                reward = ITEMS[item]['value']
+                current_quota += reward
+                grid[new_pos[0]][new_pos[1]] = ''  # Remove the item from the grid
+            
+            update_q_table(current_state, action_index, reward, tuple(new_pos))
+            agent_pos = new_pos
+
+        # Draw everything
+        screen.fill(BLACK)
+        draw_grid()
+        screen.blit(AGENT_IMAGE, (agent_pos[0] * CELL_SIZE, agent_pos[1] * CELL_SIZE))
+
+        # Display the current quota
+        font = pygame.font.Font(None, 36)
+        quota_text = font.render(f'{current_quota} / {QUOTA}', True, GREEN)
+        screen.blit(quota_text, (WINDOW_SIZE - quota_text.get_width() - 10, 10))
+
+        # Display the current FPS
+        fps_text = font.render(f'FPS: {FPS}', True, GREEN)
+        screen.blit(fps_text, (10, 10))
+
+        pygame.display.flip()
+        clock.tick(FPS)  # Control the game speed with FPS
+
+    pygame.quit()
+
+if __name__ == '__main__':
+    main()
