@@ -1,0 +1,233 @@
+import pygame
+import random
+import numpy as np
+import json
+import time
+
+# Initialize Pygame
+pygame.init()
+
+# Define constants
+GRID_SIZE = 20
+CELL_SIZE = 50
+WINDOW_SIZE = GRID_SIZE * CELL_SIZE
+QUOTA = 500
+INITIAL_QUOTA = 0
+AGENT_START_POS = (0, 0)
+FPS = 30  # Initial FPS
+STEP_PUNISHMENT = -1  # Punishment for each step without finding an item
+RESPAWN_INTERVAL = 45  # Interval in seconds for item respawn
+ITEMS_PER_RESPAWN = 2  # Number of items to respawn each interval
+
+# Define item types and their properties
+ITEMS = {
+    'C': {'name': 'Can', 'value': 5, 'count': int(0.05 * GRID_SIZE * GRID_SIZE)},
+    'W': {'name': 'Wooden Crate', 'value': 10, 'count': int(0.02 * GRID_SIZE * GRID_SIZE)},
+    'P': {'name': 'Golden Pendant', 'value': 100, 'count': int(0.005 * GRID_SIZE * GRID_SIZE)}
+}
+
+# Load images
+IMAGES = {
+    'C': pygame.image.load('can.png'),
+    'W': pygame.image.load('wooden_crate.png'),
+    'P': pygame.image.load('golden_pendant.png')
+}
+AGENT_IMAGE = pygame.image.load('agent.png')
+
+# Resize images to fit in the grid cells
+for key in IMAGES:
+    IMAGES[key] = pygame.transform.scale(IMAGES[key], (CELL_SIZE, CELL_SIZE))
+AGENT_IMAGE = pygame.transform.scale(AGENT_IMAGE, (CELL_SIZE, CELL_SIZE))
+
+# Colors
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+GREEN = (0, 255, 0)
+RED = (255, 0, 0)
+
+# Initialize the screen
+screen = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE))
+pygame.display.set_caption('Item Collection Game')
+
+# Create the grid
+grid = [['' for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+
+# Scatter items randomly on the grid
+def scatter_items():
+    for item_type, properties in ITEMS.items():
+        count = properties['count']
+        while count > 0:
+            x, y = random.randint(0, GRID_SIZE - 1), random.randint(0, GRID_SIZE - 1)
+            if grid[x][y] == '':
+                grid[x][y] = item_type
+                count -= 1
+
+# Draw the grid and items
+def draw_grid():
+    for x in range(GRID_SIZE):
+        for y in range(GRID_SIZE):
+            rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+            pygame.draw.rect(screen, WHITE, rect)
+            pygame.draw.rect(screen, BLACK, rect, 1)
+            if grid[x][y]:
+                screen.blit(IMAGES[grid[x][y]], rect.topleft)
+
+# Q-learning parameters
+ACTIONS = [(0, -1), (1, 0), (0, 1), (-1, 0)]  # Left, Down, Right, Up
+LEARNING_RATE = 0.3
+DISCOUNT_FACTOR = 0.5
+EPSILON = 1.0
+
+# Initialize Q-table
+q_table = np.zeros((GRID_SIZE, GRID_SIZE, len(ACTIONS)))
+
+# File to save the Q-table
+Q_TABLE_FILE = 'q_table.json'
+
+# Save Q-table to a JSON file
+def save_q_table():
+    with open(Q_TABLE_FILE, 'w') as f:
+        json.dump(q_table.tolist(), f)
+
+# Load Q-table from a JSON file
+def load_q_table():
+    global q_table
+    try:
+        with open(Q_TABLE_FILE, 'r') as f:
+            q_table = np.array(json.load(f))
+    except FileNotFoundError:
+        pass
+
+# Get next action based on epsilon-greedy policy
+def get_next_action(state):
+    if random.uniform(0, 1) < EPSILON:
+        return random.choice(range(len(ACTIONS)))
+    else:
+        return np.argmax(q_table[state[0], state[1]])
+
+# Update Q-table
+def update_q_table(state, action, reward, next_state):
+    best_next_action = np.argmax(q_table[next_state[0], next_state[1]])
+    q_table[state[0], state[1], action] = q_table[state[0], state[1], action] + \
+        LEARNING_RATE * (reward + DISCOUNT_FACTOR * q_table[next_state[0], next_state[1], best_next_action] - q_table[state[0], state[1], action])
+
+# Respawn random items based on their respective probabilities
+def respawn_items(count):
+    items_list = ['C'] * ITEMS['C']['count'] + ['W'] * ITEMS['W']['count'] + ['P'] * ITEMS['P']['count']
+    for _ in range(count):
+        item_type = random.choice(items_list)
+        while True:
+            x, y = random.randint(0, GRID_SIZE - 1), random.randint(0, GRID_SIZE - 1)
+            if grid[x][y] == '':
+                grid[x][y] = item_type
+                break
+
+# Main game loop
+def main():
+    load_q_table()
+    scatter_items()
+    agent_pos = list(AGENT_START_POS)
+    current_quota = INITIAL_QUOTA
+    running = True
+    game_over = False
+    agent_waiting = False
+    clock = pygame.time.Clock()
+
+    global FPS
+
+    respawn_timer = RESPAWN_INTERVAL  # Timer for item respawning
+    last_respawn_time = time.time()
+
+    def count_items():
+        return sum(1 for row in grid for cell in row if cell)
+
+    while running:
+        current_time = time.time()
+        elapsed_time = current_time - last_respawn_time
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_UP:
+                    FPS += 10
+                elif event.key == pygame.K_DOWN:
+                    FPS = max(10, FPS - 10)  # Ensure FPS doesn't go below 10
+
+        item_count = count_items()
+
+        if item_count > 2:
+            agent_waiting = False
+        else:
+            agent_waiting = True
+
+        # Ensure the respawn timer works even when the agent is waiting
+        if elapsed_time >= RESPAWN_INTERVAL:
+            respawn_items(ITEMS_PER_RESPAWN)
+            last_respawn_time = current_time
+            respawn_timer = RESPAWN_INTERVAL
+
+        if not game_over and not agent_waiting:
+            current_state = tuple(agent_pos)
+            action_index = get_next_action(current_state)
+            action = ACTIONS[action_index]
+
+            # Calculate new position
+            new_pos = [agent_pos[0] + action[0], agent_pos[1] + action[1]]
+
+            # Ensure the agent stays within the grid
+            if 0 <= new_pos[0] < GRID_SIZE and 0 <= new_pos[1] < GRID_SIZE:
+                reward = STEP_PUNISHMENT  # Default punishment for moving without finding an item
+                if grid[new_pos[0]][new_pos[1]]:
+                    item = grid[new_pos[0]][new_pos[1]]
+                    reward = ITEMS[item]['value']
+                    current_quota += reward
+                    grid[new_pos[0]][new_pos[1]] = ''  # Remove the item from the grid
+                
+                update_q_table(current_state, action_index, reward, tuple(new_pos))
+                agent_pos = new_pos
+
+            # Check if the quota has been reached
+            if current_quota >= QUOTA:
+                game_over = True
+
+        # Draw everything
+        screen.fill(BLACK)
+        draw_grid()
+        screen.blit(AGENT_IMAGE, (agent_pos[0] * CELL_SIZE, agent_pos[1] * CELL_SIZE))
+
+        # Display the current quota
+        font = pygame.font.Font(None, 36)
+        quota_text = font.render(f'{current_quota} / {QUOTA}', True, GREEN)
+        screen.blit(quota_text, (WINDOW_SIZE - quota_text.get_width() - 10, 10))
+
+        # Display the current FPS
+        fps_text = font.render(f'FPS: {FPS}', True, GREEN)
+        screen.blit(fps_text, (10, 10))
+
+        # Display the respawn timer
+        respawn_timer_text = font.render(f'Timer: {int(respawn_timer)}', True, RED)
+        screen.blit(respawn_timer_text, (WINDOW_SIZE // 2 - respawn_timer_text.get_width() // 2, 10))
+
+        # Display respawn message when new items respawn
+        if int(elapsed_time) < 1:  # Display message for 1 second after respawn
+            respawn_message = font.render('New items respawned!', True, RED)
+            screen.blit(respawn_message, (WINDOW_SIZE // 2 - respawn_message.get_width() // 2, 50))
+
+        # Display "GAME OVER" message if the game is over and close the window
+        if game_over:
+            game_over_text = font.render('GAME OVER', True, RED)
+            screen.blit(game_over_text, (WINDOW_SIZE // 2 - game_over_text.get_width() // 2, WINDOW_SIZE // 2 - game_over_text.get_height() // 2))
+            pygame.display.flip()
+            pygame.time.wait(3000)  # Wait for 3 seconds before closing the window
+            running = False
+
+        pygame.display.flip()
+        clock.tick(FPS)  # Control the game speed with FPS
+        respawn_timer -= clock.get_time() / 1000.0  # Update the respawn timer
+
+    save_q_table()
+    pygame.quit()
+
+if __name__ == '__main__':
+    main()
