@@ -133,7 +133,7 @@ def main():
     agent_waiting = False
     clock = pygame.time.Clock()
 
-    global FPS
+    global FPS, EPSILON
 
     respawn_timer = RESPAWN_INTERVAL  # Timer for item respawning
     last_respawn_time = time.time()
@@ -183,7 +183,7 @@ def main():
                     reward = ITEMS[item]['value']
                     current_quota += reward
                     grid[new_pos[0]][new_pos[1]] = ''  # Remove the item from the grid
-                
+
                 update_q_table(current_state, action_index, reward, tuple(new_pos))
                 agent_pos = new_pos
 
@@ -225,6 +225,11 @@ def main():
         pygame.display.flip()
         clock.tick(FPS)  # Control the game speed with FPS
         respawn_timer -= clock.get_time() / 1000.0  # Update the respawn timer
+
+        # Decay epsilon
+        #if EPSILON > MIN_EPSILON:
+        #    EPSILON *= EPSILON_DECAY
+        #    EPSILON = max(MIN_EPSILON, EPSILON)
 
     save_q_table()
     pygame.quit()
